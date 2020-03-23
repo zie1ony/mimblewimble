@@ -40,6 +40,12 @@ fn blinding(secp: &Secp256k1, i: u64) -> SecretKey {
     sum
 }
 
+fn rand_blinding(secp: &Secp256k1) -> SecretKey {
+    SecretKey::new(&secp, &mut thread_rng())
+    // blinding(secp, 10)
+}
+
+
 fn add_blinding(secp: &Secp256k1, a: &SecretKey, b: &SecretKey) -> SecretKey {
     let mut sum = a.clone();
     sum.add_assign(secp, b).unwrap();
@@ -70,29 +76,35 @@ fn test_transfer() {
 	secp.randomize(&mut thread_rng());
 
 	// Alice input.
-	let ali_input_blinding = blinding(&secp, 20);
+	let ali_input_blinding = rand_blinding(&secp);
     let ali_input = commit(&secp, 40, &ali_input_blinding);
 
     // Ali change output (CO_ali)
-    let ali_change_blinding = blinding(&secp, 34);
+    let ali_change_blinding = rand_blinding(&secp);
     let ali_change = commit(&secp, 15, &ali_change_blinding);
 
     // Check
-    {
-        let sum_blinding = blinding(&secp, 54);
+    {   
+        let sum_blinding = secp.blind_sum(
+            vec![ali_input_blinding.clone(), ali_change_blinding.clone()],
+            vec![]
+        ).unwrap();
         let sum = commit(&secp, 55, &sum_blinding);
         assert!(secp.verify_commit_sum(vec![sum], vec![ali_input, ali_change]));
     }
 
-    // // Ali's nonce.
-    let ali_nonce = blinding(&secp, 222);
+    // Ali's nonce.
+    let ali_nonce = rand_blinding(&secp);
     let ali_nonce_commit = commit(&secp, 0, &ali_nonce);
 
     // Ali's sum of all blinding factors. (rs)
-    let ali_blinding_sum = blinding(&secp, 14);
+    let ali_blinding_sum = secp.blind_sum(
+        vec![ali_change_blinding.clone()],
+        vec![ali_input_blinding.clone()]
+    ).unwrap();
     let ali_blinding_sum_commit = commit(&secp, 0, &ali_blinding_sum);
 
-    // // Message
+    // // // Message
     let msg = Message {
         amount: 25,
         input: ali_input,
@@ -104,23 +116,20 @@ fn test_transfer() {
     // Bob's part.
 
     // Secret key.
-    let e: SecretKey = blinding(&secp, 1000);
+    let e: SecretKey = blinding(&secp, 123);
 
-    // // Bob's nonce.
-    let bob_nonce = blinding(&secp, 777);
+    // Bob's nonce.
+    let bob_nonce = rand_blinding(&secp);
     let bob_nonce_commit = commit(&secp, 0, &bob_nonce);
     
     // Bob's blinding.
-    let bob_blinding = blinding(&secp, 11);
+    let bob_blinding = rand_blinding(&secp);
     let bob_blinding_commit = commit(&secp, 0, &bob_blinding);
 
     // Bob's signature.
     let mut bob_sign = bob_blinding.clone();
     bob_sign.mul_assign(&secp, &e).unwrap();
     bob_sign.add_assign(&secp, &bob_nonce).unwrap();
-
-    // Check
-    assert_eq!(bob_sign, blinding(&secp, 777 + 1000 * 11));
 
     // Bob's output
     let bob_output = commit(&secp, msg.amount, &bob_blinding);
@@ -154,11 +163,11 @@ fn test_transfer() {
     ali_sign.mul_assign(&secp, &e).unwrap();
     ali_sign.add_assign(&secp, &ali_nonce).unwrap();
 
-    // // Sum partial signatures.
+    // Sum partial signatures.
     let mut partials_sum = resp.sign.clone();
     partials_sum.add_assign(&secp, &ali_sign).unwrap();
 
-    // // Sum nonces.
+    // Sum nonces.
     let nonces_sum = secp.commit_sum(
         vec![resp.nonce.clone(), ali_nonce_commit.clone()],
         vec![]
@@ -176,7 +185,15 @@ fn test_transfer() {
 
     // Kernel
     let kernel = secp.commit_sum(tx.outputs, tx.inputs).unwrap();
-    assert_eq!(kernel, commit(&secp, 0, &blinding(&secp, 25)));
+
+    // Check
+    {
+        let sum_blinding = secp.blind_sum(
+            vec![ali_change_blinding, bob_blinding],
+            vec![ali_input_blinding]
+        ).unwrap();
+        assert_eq!(kernel, commit(&secp, 0, &sum_blinding));
+    }
 
     // Validate tx
     // tx.signature.partials_sum = tx.signature.nonces_sum + e * kernel
