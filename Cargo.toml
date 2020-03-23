@@ -1,0 +1,10 @@
+[package]
+name = "mimblewimble"
+version = "0.1.0"
+authors = ["zie1ony <zielon3r@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+secp256k1 = { git = "https://github.com/mimblewimble/rust-secp256k1-zkp", package = "grin_secp256k1zkp" }
+rand = "0.5"
+sha2 = "0.8.1"
